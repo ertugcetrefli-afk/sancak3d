@@ -1,285 +1,205 @@
-/**
- * @author qiao
- * @author mrdoob / http://mrdoob.com/
- * @author alteredq / http://alteredqualia.com/
- * @author WestLangley / http://github.com/WestLangley
- * @author erich666
- *
- * OrbitControls allow the camera to orbit around a target.
- * This is a standalone version for non-module usage (<script> tag).
- */
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>three.js webgl - materials - shaders [custom]</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+  <style>
+  body {
+    color: #ffffff;
+    font-family:Monospace;
+    font-size:13px;
+    text-align:center;
+    font-weight: bold;
 
-THREE.OrbitControls = function ( object, domElement ) {
+    background-color: #777;
+    margin: 0px;
+    overflow: hidden;
+  }
 
-    this.object = object;
-    this.domElement = ( domElement !== undefined ) ? domElement : document;
+  #info {
+    position: absolute;
+    top: 0px; width: 100%;
+    padding: 5px;
+  }
 
-    // API
-    this.enabled = true;
-    this.target = new THREE.Vector3();
+  a {
 
-    this.minDistance = 0;
-    this.maxDistance = Infinity;
+    color: #ffffff;
+  }
 
-    this.minZoom = 0;
-    this.maxZoom = Infinity;
+  #oldie a { color:#da0 }
+  </style>
+</head>
+<body>
 
-    this.minPolarAngle = 0; // radians
-    this.maxPolarAngle = Math.PI; // radians
+  <div id="container"></div>
 
-    this.minAzimuthAngle = - Infinity; // radians
-    this.maxAzimuthAngle = Infinity; // radians
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r79/three.js"></script>
+  <script src="OrbitControls.js"></script>
 
-    this.enableDamping = false;
-    this.dampingFactor = 0.25;
+  <!-- World coord (fragment) -->
+  <script id="fragment_shader_world" type="x-shader/x-vertex">
+  varying vec4 worldCoord;
 
-    this.enableZoom = true;
-    this.zoomSpeed = 1.0;
+  void main() {
 
-    this.enableRotate = true;
-    this.rotateSpeed = 1.0;
+    float r = 0.3;
+    float g = 0.3;
+    float b = 0.3;
 
-    this.enablePan = true;
-    this.panSpeed = 1.0;
-    this.screenSpacePanning = false;
-    this.keyPanSpeed = 7.0; // pixels moved per arrow key push
-
-    this.autoRotate = false;
-    this.autoRotateSpeed = 2.0; // 30 seconds per round when fps is 60
-
-    this.enableKeys = true;
-    this.keys = { LEFT: 37, UP: 38, RIGHT: 39, BOTTOM: 40 };
-
-    this.mouseButtons = { ORBIT: THREE.MOUSE.LEFT, ZOOM: THREE.MOUSE.MIDDLE, PAN: THREE.MOUSE.RIGHT };
-
-    // internals
-    var scope = this;
-    var changeEvent = { type: 'change' };
-    var startEvent = { type: 'start' };
-    var endEvent = { type: 'end' };
-
-    var STATE = { NONE: -1, ROTATE: 0, DOLLY: 1, PAN: 2, TOUCH_ROTATE: 3, TOUCH_DOLLY: 4, TOUCH_PAN: 5 };
-    var state = STATE.NONE;
-
-    var EPS = 0.000001;
-
-    var spherical = new THREE.Spherical();
-    var sphericalDelta = new THREE.Spherical();
-
-    var scale = 1;
-    var panOffset = new THREE.Vector3();
-    var zoomChanged = false;
-
-    var rotateStart = new THREE.Vector2();
-    var rotateEnd = new THREE.Vector2();
-    var rotateDelta = new THREE.Vector2();
-
-    var panStart = new THREE.Vector2();
-    var panEnd = new THREE.Vector2();
-    var panDelta = new THREE.Vector2();
-
-    var dollyStart = new THREE.Vector2();
-    var dollyEnd = new THREE.Vector2();
-    var dollyDelta = new THREE.Vector2();
-
-    function getAutoRotationAngle() {
-        return 2 * Math.PI / 60 / 60 * scope.autoRotateSpeed;
+    /*
+    // a red band
+    if(worldCoord.x > 1.0 && worldCoord.x < 1.5){
+      r = 1.0;
     }
+    */
 
-    function getZoomScale() {
-        return Math.pow(0.95, scope.zoomSpeed);
+    /*
+    // half of the cube is blue
+    if(worldCoord.z > 0.0){
+      b = 1.0;
     }
+    */
 
-    function rotateLeft(angle) {
-        sphericalDelta.theta -= angle;
-    }
+    r = abs(worldCoord.x);
+    g = abs(worldCoord.y);
+    b = abs(worldCoord.z * 2.0);
 
-    function rotateUp(angle) {
-        sphericalDelta.phi -= angle;
-    }
 
-    var panLeft = (function () {
-        var v = new THREE.Vector3();
-        return function panLeft(distance, objectMatrix) {
-            v.setFromMatrixColumn(objectMatrix, 0);
-            v.multiplyScalar(-distance);
-            panOffset.add(v);
-        };
-    })();
+    gl_FragColor = vec4(r, g, b, 1.0);
 
-    var panUp = (function () {
-        var v = new THREE.Vector3();
-        return function panUp(distance, objectMatrix) {
-            v.setFromMatrixColumn(objectMatrix, 1);
-            v.multiplyScalar(distance);
-            panOffset.add(v);
-        };
-    })();
+  }
 
-    var pan = (function () {
-        var offset = new THREE.Vector3();
-        return function pan(deltaX, deltaY) {
-            var element = scope.domElement;
-            if (scope.object.isPerspectiveCamera) {
-                var position = scope.object.position;
-                offset.copy(position).sub(scope.target);
-                var targetDistance = offset.length();
-                targetDistance *= Math.tan((scope.object.fov / 2) * Math.PI / 180.0);
-                panLeft(2 * deltaX * targetDistance / element.clientHeight, scope.object.matrix);
-                panUp(2 * deltaY * targetDistance / element.clientHeight, scope.object.matrix);
-            } else if (scope.object.isOrthographicCamera) {
-                panLeft(deltaX * (scope.object.right - scope.object.left) / scope.object.zoom / element.clientWidth, scope.object.matrix);
-                panUp(deltaY * (scope.object.top - scope.object.bottom) / scope.object.zoom / element.clientHeight, scope.object.matrix);
-            } else {
-                console.warn('WARNING: OrbitControls encountered an unknown camera type - pan disabled.');
-                scope.enablePan = false;
-            }
-        };
-    })();
+  </script>
 
-    function dollyIn(dollyScale) {
-        if (scope.object.isPerspectiveCamera) {
-            scale /= dollyScale;
-        } else if (scope.object.isOrthographicCamera) {
-            scope.object.zoom = Math.max(scope.minZoom, Math.min(scope.maxZoom, scope.object.zoom * dollyScale));
-            scope.object.updateProjectionMatrix();
-            zoomChanged = true;
-        } else {
-            console.warn('WARNING: OrbitControls encountered an unknown camera type - dolly/zoom disabled.');
-            scope.enableZoom = false;
-        }
-    }
 
-    function dollyOut(dollyScale) {
-        if (scope.object.isPerspectiveCamera) {
-            scale *= dollyScale;
-        } else if (scope.object.isOrthographicCamera) {
-            scope.object.zoom = Math.max(scope.minZoom, Math.min(scope.maxZoom, scope.object.zoom / dollyScale));
-            scope.object.updateProjectionMatrix();
-            zoomChanged = true;
-        } else {
-            console.warn('WARNING: OrbitControls encountered an unknown camera type - dolly/zoom disabled.');
-            scope.enableZoom = false;
-        }
-    }
+  <!-- World coord (vertex) -->
+  <script id="vertex_shader_world" type="x-shader/x-vertex">
 
-    // listeners
-    function handleMouseDownRotate(event) {
-        rotateStart.set(event.clientX, event.clientY);
-    }
+  varying vec2 vUv;
+  varying vec4 worldCoord;
 
-    function handleMouseMoveRotate(event) {
-        rotateEnd.set(event.clientX, event.clientY);
-        rotateDelta.subVectors(rotateEnd, rotateStart).multiplyScalar(scope.rotateSpeed);
-        rotateLeft(2 * Math.PI * rotateDelta.x / scope.domElement.clientHeight);
-        rotateUp(2 * Math.PI * rotateDelta.y / scope.domElement.clientHeight);
-        rotateStart.copy(rotateEnd);
-        scope.update();
-    }
+  void main()
+  {
+    vUv = uv;
+    vec4 mvPosition = modelViewMatrix * vec4( position, 1.0 );
+    gl_Position = projectionMatrix * mvPosition;
 
-    function handleMouseDownDolly(event) {
-        dollyStart.set(event.clientX, event.clientY);
-    }
+    worldCoord = modelMatrix * vec4( position, 1.0 );
 
-    function handleMouseMoveDolly(event) {
-        dollyEnd.set(event.clientX, event.clientY);
-        dollyDelta.subVectors(dollyEnd, dollyStart);
-        if (dollyDelta.y > 0) {
-            dollyIn(getZoomScale());
-        } else if (dollyDelta.y < 0) {
-            dollyOut(getZoomScale());
-        }
-        dollyStart.copy(dollyEnd);
-        scope.update();
-    }
+  }
 
-    function handleMouseDownPan(event) {
-        panStart.set(event.clientX, event.clientY);
-    }
+  </script>
 
-    function handleMouseMovePan(event) {
-        panEnd.set(event.clientX, event.clientY);
-        panDelta.subVectors(panEnd, panStart).multiplyScalar(scope.panSpeed);
-        pan(panDelta.x, panDelta.y);
-        panStart.copy(panEnd);
-        scope.update();
-    }
 
-    // Public update
-    this.update = function () {
-        var offset = new THREE.Vector3();
-        offset.copy(scope.object.position).sub(scope.target);
-        spherical.setFromVector3(offset);
-        spherical.theta += sphericalDelta.theta;
-        spherical.phi += sphericalDelta.phi;
-        spherical.makeSafe();
-        spherical.radius *= scale;
-        scope.target.add(panOffset);
-        offset.setFromSpherical(spherical);
-        scope.object.position.copy(scope.target).add(offset);
-        scope.object.lookAt(scope.target);
 
-        if (scope.enableDamping) {
-            sphericalDelta.theta *= (1 - scope.dampingFactor);
-            sphericalDelta.phi *= (1 - scope.dampingFactor);
-        } else {
-            sphericalDelta.set(0, 0, 0);
-        }
 
-        scale = 1;
-        panOffset.set(0, 0, 0);
-        if (zoomChanged) {
-            zoomChanged = false;
-            scope.dispatchEvent(changeEvent);
-        }
+
+
+
+  <script>
+
+  var container;
+  var camera, scene, renderer;
+  var uniforms;
+  var clock = new THREE.Clock();
+
+  init();
+  animate();
+
+  function init() {
+    container = document.getElementById( 'container' );
+    camera = new THREE.PerspectiveCamera( 40, window.innerWidth / window.innerHeight, 1, 3000 );
+    camera.position.z = 10;
+
+
+
+
+    scene = new THREE.Scene();
+
+    var geometry = new THREE.BoxGeometry( 0.75, 0.75, 0.75 );
+
+    var anArray = new Array(4096);
+    //var anArray = new Array(64);
+    anArray[0] = 0;
+    anArray[1] = 255;
+    anArray[2] = 255;
+
+    anArray[4093] = 128;
+    anArray[4094] = 0;
+    anArray[4095] = 128;
+
+
+    uniforms = {
+      //time:       { value: 1.0 },
+      //resolution: { value: new THREE.Vector2() },
+      //myArray: { type: "iv1", value: anArray },
+      imageIndex: {value: 0},
     };
 
-    this.dispose = function () {
-        scope.domElement.removeEventListener('mousedown', onMouseDown, false);
-        scope.domElement.removeEventListener('mousemove', onMouseMove, false);
-        scope.domElement.removeEventListener('mouseup', onMouseUp, false);
-        scope.domElement.removeEventListener('wheel', onMouseWheel, false);
-    };
+    var material = new THREE.ShaderMaterial( {
+      uniforms: uniforms,
+      vertexShader: document.getElementById( 'vertex_shader_world' ).textContent,
+      fragmentShader: document.getElementById('fragment_shader_world' ).textContent
+    });
 
-    function onMouseDown(event) {
-        event.preventDefault();
-        switch (event.button) {
-            case scope.mouseButtons.ORBIT: handleMouseDownRotate(event); state = STATE.ROTATE; break;
-            case scope.mouseButtons.ZOOM: handleMouseDownDolly(event); state = STATE.DOLLY; break;
-            case scope.mouseButtons.PAN: handleMouseDownPan(event); state = STATE.PAN; break;
-        }
-        scope.domElement.addEventListener('mousemove', onMouseMove, false);
-        scope.domElement.addEventListener('mouseup', onMouseUp, false);
-    }
+    var mesh = new THREE.Mesh( geometry, material );
+    scene.add( mesh );
 
-    function onMouseMove(event) {
-        event.preventDefault();
-        switch (state) {
-            case STATE.ROTATE: handleMouseMoveRotate(event); break;
-            case STATE.DOLLY: handleMouseMoveDolly(event); break;
-            case STATE.PAN: handleMouseMovePan(event); break;
-        }
-    }
+    renderer = new THREE.WebGLRenderer();
+    renderer.setPixelRatio( window.devicePixelRatio );
+    container.appendChild( renderer.domElement );
 
-    function onMouseUp() {
-        scope.domElement.removeEventListener('mousemove', onMouseMove, false);
-        scope.domElement.removeEventListener('mouseup', onMouseUp, false);
-        state = STATE.NONE;
-    }
 
-    function onMouseWheel(event) {
-        event.preventDefault();
-        if (event.deltaY < 0) {
-            dollyOut(getZoomScale());
-        } else if (event.deltaY > 0) {
-            dollyIn(getZoomScale());
-        }
-        scope.update();
-    }
+    controls = new THREE.OrbitControls(camera, renderer.domElement);
+    onWindowResize();
+    window.addEventListener( 'resize', onWindowResize, false );
+  }
 
-    this.domElement.addEventListener('mousedown', onMouseDown, false);
-    this.domElement.addEventListener('wheel', onMouseWheel, false);
-};
 
-THREE.OrbitControls.prototype = Object.create(THREE.EventDispatcher.prototype);
-THREE.OrbitControls.prototype.constructor = THREE.OrbitControls;
+  function onWindowResize( event ) {
+    //	uniforms.resolution.value.x = window.innerWidth;
+    //	uniforms.resolution.value.y = window.innerHeight;
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize( window.innerWidth, window.innerHeight );
+  }
+
+
+  function animate() {
+    requestAnimationFrame( animate );
+    render();
+  }
+
+
+  function render() {
+    var delta = clock.getDelta();
+    //uniforms.time.value += delta * 5;
+
+    //uniforms.imageIndex.value = Math.floor(globalCounter % tileNumber);
+    uniforms.imageIndex.value = Math.floor((0.5+Math.cos(globalCounter)/2) * tileNumber);
+
+    globalCounter += 0.005;
+
+    var radius = 3;
+    var cube = scene.children[ 0 ];
+    //cube.rotation.y += delta * 0.25 * ( i % 2 ? 1 : -1 );
+    //cube.rotation.x += delta * 0.25 * ( i % 2 ? -1 : 1 );
+    cube.position.x = Math.cos(globalCounter)*radius;
+    cube.position.y = Math.sin(globalCounter)*radius;
+
+    //console.log(cube.position);
+
+    renderer.render( scene, camera );
+  }
+
+  var controls = 0;
+  var globalCounter = 0;
+  var tileNumber = 64;
+  var tileIterator = 1;
+
+  </script>
+
+</body>
+</html>
