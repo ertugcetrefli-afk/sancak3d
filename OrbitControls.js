@@ -1,127 +1,148 @@
 /**
- * @author qiao / https://github.com/qiao
- * @author mrdoob / http://mrdoob.com/
- * @author alteredq / http://alteredqualia.com/
- * @author WestLangley / http://github.com/WestLangley
- * @author erich666
- *
- * This set of controls performs orbiting, dollying (zooming), and panning.
- * Unlike TrackballControls, it maintains the "up" direction object.up (+Y by default).
- *
+ * OrbitControls — three.js r128 classic version
+ * Non-module build, works with <script> tag
  */
 
 THREE.OrbitControls = function ( object, domElement ) {
 
-	this.object = object;
-	this.domElement = ( domElement !== undefined ) ? domElement : document;
+    this.object = object;
+    this.domElement = ( domElement !== undefined ) ? domElement : document;
 
-	// API
+    // API
+    this.enabled = true;
+    this.target = new THREE.Vector3();
 
-	this.enabled = true;
+    this.minDistance = 0;
+    this.maxDistance = Infinity;
 
-	this.target = new THREE.Vector3();
+    this.minPolarAngle = 0; // radians
+    this.maxPolarAngle = Math.PI; // radians
 
-	this.minDistance = 0;
-	this.maxDistance = Infinity;
+    this.enableDamping = false;
+    this.dampingFactor = 0.25;
 
-	this.minZoom = 0;
-	this.maxZoom = Infinity;
+    this.enableZoom = true;
+    this.zoomSpeed = 1.0;
 
-	this.minPolarAngle = 0; // radians
-	this.maxPolarAngle = Math.PI; // radians
+    this.enableRotate = true;
+    this.rotateSpeed = 1.0;
 
-	this.minAzimuthAngle = - Infinity; // radians
-	this.maxAzimuthAngle = Infinity; // radians
+    this.enablePan = true;
+    this.panSpeed = 1.0;
+    this.screenSpacePanning = false;
 
-	this.enableDamping = false;
-	this.dampingFactor = 0.25;
+    this.autoRotate = false;
+    this.autoRotateSpeed = 2.0; // 30 seconds per round when fps is 60
 
-	this.enableZoom = true;
-	this.zoomSpeed = 1.0;
+    this.enableKeys = true;
+    this.keys = { LEFT: 37, UP: 38, RIGHT: 39, BOTTOM: 40 };
+    this.mouseButtons = { ORBIT: THREE.MOUSE.LEFT, ZOOM: THREE.MOUSE.MIDDLE, PAN: THREE.MOUSE.RIGHT };
 
-	this.enableRotate = true;
-	this.rotateSpeed = 1.0;
+    // internals
+    var scope = this;
+    var changeEvent = { type: 'change' };
 
-	this.enablePan = true;
-	this.panSpeed = 1.0;
-	this.screenSpacePanning = false;
-	this.keyPanSpeed = 7.0;	// pixels moved per arrow key push
+    var STATE = { NONE: -1, ROTATE: 0, DOLLY: 1, PAN: 2, TOUCH_ROTATE: 3, TOUCH_DOLLY: 4, TOUCH_PAN: 5 };
+    var state = STATE.NONE;
 
-	this.autoRotate = false;
-	this.autoRotateSpeed = 2.0; // 30 seconds per round when fps is 60
+    var EPS = 0.000001;
+    var spherical = new THREE.Spherical();
+    var sphericalDelta = new THREE.Spherical();
 
-	this.enableKeys = true;
+    var scale = 1;
+    var panOffset = new THREE.Vector3();
+    var zoomChanged = false;
 
-	this.keys = { LEFT: 37, UP: 38, RIGHT: 39, BOTTOM: 40 };
+    // listeners
+    function onMouseDown(event) {
+        if (scope.enabled === false) return;
+        event.preventDefault();
+        if (event.button === scope.mouseButtons.ORBIT) {
+            state = STATE.ROTATE;
+        } else if (event.button === scope.mouseButtons.ZOOM) {
+            state = STATE.DOLLY;
+        } else if (event.button === scope.mouseButtons.PAN) {
+            state = STATE.PAN;
+        }
+        scope.domElement.addEventListener('mousemove', onMouseMove, false);
+        scope.domElement.addEventListener('mouseup', onMouseUp, false);
+    }
 
-	this.mouseButtons = { ORBIT: THREE.MOUSE.LEFT, ZOOM: THREE.MOUSE.MIDDLE, PAN: THREE.MOUSE.RIGHT };
+    function onMouseMove(event) {
+        if (scope.enabled === false) return;
+        event.preventDefault();
+        if (state === STATE.ROTATE) {
+            rotateLeft(2 * Math.PI * event.movementX / scope.domElement.clientWidth * scope.rotateSpeed);
+            rotateUp(2 * Math.PI * event.movementY / scope.domElement.clientHeight * scope.rotateSpeed);
+        } else if (state === STATE.DOLLY) {
+            dollyIn(Math.pow(0.95, scope.zoomSpeed));
+        } else if (state === STATE.PAN) {
+            pan(event.movementX, event.movementY);
+        }
+        scope.update();
+    }
 
-	// internals
+    function onMouseUp() {
+        scope.domElement.removeEventListener('mousemove', onMouseMove, false);
+        scope.domElement.removeEventListener('mouseup', onMouseUp, false);
+        state = STATE.NONE;
+    }
 
-	var scope = this;
+    function dollyIn(dollyScale) {
+        scale /= dollyScale;
+    }
+    function dollyOut(dollyScale) {
+        scale *= dollyScale;
+    }
 
-	var changeEvent = { type: 'change' };
-	var startEvent = { type: 'start' };
-	var endEvent = { type: 'end' };
+    function rotateLeft(angle) {
+        sphericalDelta.theta -= angle;
+    }
+    function rotateUp(angle) {
+        sphericalDelta.phi -= angle;
+    }
 
-	var STATE = { NONE: - 1, ROTATE: 0, DOLLY: 1, PAN: 2, TOUCH_ROTATE: 3, TOUCH_DOLLY: 4, TOUCH_PAN: 5 };
+    function pan(deltaX, deltaY) {
+        var offset = new THREE.Vector3();
+        var element = scope.domElement;
+        var targetDistance = scope.object.position.distanceTo(scope.target);
+        offset.setFromMatrixColumn(scope.object.matrix, 0); // get X column
+        offset.multiplyScalar(-2 * deltaX * targetDistance / element.clientHeight);
+        panOffset.add(offset);
+        offset.setFromMatrixColumn(scope.object.matrix, 1); // get Y column
+        offset.multiplyScalar(2 * deltaY * targetDistance / element.clientHeight);
+        panOffset.add(offset);
+    }
 
-	var state = STATE.NONE;
+    this.update = function () {
+        var offset = new THREE.Vector3();
+        offset.copy(scope.object.position).sub(scope.target);
+        spherical.setFromVector3(offset);
+        spherical.theta += sphericalDelta.theta;
+        spherical.phi += sphericalDelta.phi;
+        spherical.makeSafe();
+        spherical.radius *= scale;
+        scope.target.add(panOffset);
+        offset.setFromSpherical(spherical);
+        scope.object.position.copy(scope.target).add(offset);
+        scope.object.lookAt(scope.target);
 
-	var EPS = 0.000001;
+        sphericalDelta.set(0, 0, 0);
+        scale = 1;
+        panOffset.set(0, 0, 0);
+        zoomChanged = false;
 
-	var spherical = new THREE.Spherical();
-	var sphericalDelta = new THREE.Spherical();
+        scope.dispatchEvent(changeEvent);
+    };
 
-	var scale = 1;
-	var panOffset = new THREE.Vector3();
-	var zoomChanged = false;
+    this.dispose = function () {
+        scope.domElement.removeEventListener('mousedown', onMouseDown, false);
+        scope.domElement.removeEventListener('mousemove', onMouseMove, false);
+        scope.domElement.removeEventListener('mouseup', onMouseUp, false);
+    };
 
-	var rotateStart = new THREE.Vector2();
-	var rotateEnd = new THREE.Vector2();
-	var rotateDelta = new THREE.Vector2();
-
-	var panStart = new THREE.Vector2();
-	var panEnd = new THREE.Vector2();
-	var panDelta = new THREE.Vector2();
-
-	var dollyStart = new THREE.Vector2();
-	var dollyEnd = new THREE.Vector2();
-	var dollyDelta = new THREE.Vector2();
-
-	function getAutoRotationAngle() {
-		return 2 * Math.PI / 60 / 60 * scope.autoRotateSpeed;
-	}
-
-	function getZoomScale() {
-		return Math.pow( 0.95, scope.zoomSpeed );
-	}
-
-	function rotateLeft( angle ) {
-		sphericalDelta.theta -= angle;
-	}
-
-	function rotateUp( angle ) {
-		sphericalDelta.phi -= angle;
-	}
-
-	var panLeft = ( function () {
-		var v = new THREE.Vector3();
-		return function panLeft( distance, objectMatrix ) {
-			v.setFromMatrixColumn( objectMatrix, 0 ); // get X column of objectMatrix
-			v.multiplyScalar( - distance );
-			panOffset.add( v );
-		};
-	}() );
-
-	var panUp = ( function () {
-		var v = new THREE.Vector3();
-		return function panUp( distance, objectMatrix ) {
-			v.setFromMatrixColumn( objectMatrix, 1 ); // get Y column of objectMatrix
-			v.multiplyScalar( distance );
-			panOffset.add( v );
-		};
-	}() );
-
-	// (Bu dosya ~500 satır, burada kısaltıyorum. Sen RAW linkten alıp tamını kopyalayabilirsin.)
+    this.domElement.addEventListener('mousedown', onMouseDown, false);
 };
+
+THREE.OrbitControls.prototype = Object.create(THREE.EventDispatcher.prototype);
+THREE.OrbitControls.prototype.constructor = THREE.OrbitControls;
